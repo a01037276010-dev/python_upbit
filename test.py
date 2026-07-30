@@ -186,6 +186,12 @@ class QuantEngine:
 
         print("✅ 초기 200분 데이터베이스 세팅(Gap 자동 보정) 완료!\n")
 
+    def get_tick_size(self, price: float) -> float:
+        """업비트 원화 마켓 호가 단위 계산"""
+        if price >= 10000: return 10.0
+        if price >= 5000: return 5.0
+        if price >= 100: return 1.0  # 100원 이상은 1호가 = 1원
+        return 0.1
 
     # =====================================================================
     # [행동 엔진] 가상 매수/매도 실행
@@ -238,7 +244,7 @@ async def execute_buy(self, ticker: str, price: Decimal, reason: str):
 # [행동 엔진] 가상 매수 실행 (임시)
 # =====================================================================
     async def check_buy_logic(self, ticker: str):
-        """미보유 종목의 매수 타점을 감시합니다. (급등 포착)"""
+        """미보유 종목의 매수 타점을 감시합니다. (급등 + 최소 호가 틱 상승 포착)"""
         if ticker in self.portfolio: return
         data = self.market_data[ticker]
         
@@ -248,10 +254,19 @@ async def execute_buy(self, ticker: str, price: Decimal, reason: str):
         prev_close = float(data["trade_24h"][-1])
         current_price = float(data["tick_price"])
         
-        # 💡 [매수 조건] 직전 종가 대비 현재가가 단기간에 3% 이상 급등했을 때
-        # (원하시는 급등 기준 %가 있다면 1.03 숫자를 수정하시면 됩니다)
-        if prev_close > 0 and (current_price / prev_close) >= 1.03 and :
-            await self.execute_buy(ticker, Decimal(str(current_price)), reason="단기 급등(3% 이상) 포착")
+        if prev_close == 0: return
+
+        # 💡 [조건 1] 직전 종가 대비 현재가가 단기간에 3% 이상 급등
+        cond_ratio = (current_price / prev_close) >= 1.03
+        
+        # 💡 [조건 2] 예전 V2.2 방식: 호가 단위 기준 최소 3틱 이상 상승 돌파
+        tick_size = self.get_tick_size(prev_close)
+        cond_tick = (current_price - prev_close) >= (tick_size * 3)
+        
+        # 두 조건이 모두 만족할 때만 매수 (가짜 3% 급등 필터링)
+        if cond_ratio and cond_tick:
+            reason = f"급등(3%↑) & 3틱 돌파 (틱단위:{tick_size}원)"
+            await self.execute_buy(ticker, Decimal(str(current_price)), reason=reason)
 # =====================================================================
 # [행동 엔진] 가상 매도 실행 (임시)
 # =====================================================================
