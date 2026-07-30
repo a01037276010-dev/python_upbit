@@ -93,7 +93,12 @@ class QuantEngine:
                 "cur_high": 0.0,        
                 "cur_low": 0.0,         
                 "cur_close": 0.0,       
-                "cur_vol": 0.0          
+                "cur_vol": 0.0,
+                
+                # 🚀 [수정됨] 비상 매도 시 KeyError 방지를 위한 초기값 세팅
+                "tick_price": 0.0,      
+                "tick_vol": 0.0,
+                "ask_bid": ""
             }
             
         print(f"✅ 타겟 코인 총 {len(self.target_tickers)}개 선정 및 서랍장 생성 완료!\n")
@@ -160,6 +165,9 @@ class QuantEngine:
                 target_data["cur_close"] = last_close
                 target_data["cur_vol"] = Decimal('0')
                 target_data["current_min_id"] = current_min_id
+                
+                # 🚀 [수정됨] 비상 매도 시 KeyError 방지를 위한 초기값 셋팅
+                target_data["tick_price"] = float(last_close) 
                         
                 print(f"✅ {ticker} 로딩 및 보정 완료")
                 time.sleep(0.1) # API Rate Limit(429) 방어
@@ -254,10 +262,8 @@ class QuantEngine:
                     tick_vol = price * volume
                     ask_bid = event.ask_bid  
 
-                    # 1. 절대 시간 파싱 (UTC 문자열 -> KST 변환 -> 분 ID 산출)
-                    dt_utc_str = f"{event.trade_date}T{event.trade_time}"
-                    dt_utc = datetime.strptime(dt_utc_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-                    minute_id = int(dt_utc.timestamp()) // 60 
+                    # 🚀 [수정됨] 절대 시간 파싱 최적화 (타임스탬프 직접 연산)
+                    minute_id = event.timestamp // 1000 // 60 
 
                     target_data = self.market_data[ticker]
                     
@@ -324,8 +330,9 @@ class QuantEngine:
                 print("🔌 웹소켓 통신 단절. 3초 후 엔진을 재가동합니다...")
                 await asyncio.sleep(3)
                 
-            except asyncio.CancelledError:
-                print("🛑 사용자 강제 종료 시그널 감지. 메인 루프를 탈출합니다.")
+            # 🚀 [수정됨] KeyboardInterrupt를 여기서 같이 잡아 안전망이 가동되도록 수정
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                print("🛑 강제 종료 시그널 감지. 메인 루프를 탈출하고 비상 안전망을 가동합니다.")
                 break 
                 
             except Exception as e:
@@ -357,6 +364,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(engine.run())
     except KeyboardInterrupt:
-        pass # Ctrl+C 입력 시 안전망(finally)으로 자연스럽게 유도
+        # run() 내부에서 이미 잡아서 처리하므로 여기서는 pass만 해줍니다.
+        pass
     finally:
         asyncio.run(engine.send_discord("🛑 모든 퀀트 프로세스가 완전히 종료되었습니다."))
